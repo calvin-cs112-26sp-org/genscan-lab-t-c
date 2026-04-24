@@ -16,8 +16,8 @@
 #include <fstream>             // ifstream, etc.
 #include <cstdlib>             // exit()
 #include <omp.h>               // omp_get_wtime()
-#include <algorithm>           // search()
-#include "OO_MPI_IO.h"         // ParallelReader
+//#include <algorithm>           // search()
+//#include "OO_MPI_IO.h"         // ParallelReader
 using namespace std;
 
 
@@ -59,12 +59,12 @@ void readFile(const string& fileName, string& seq) {
            << "' as input file\n\n";
       exit(1);
    } 
-   fin.seekg(0, std::ios::end);   // jump to end
-   long N = fin.tellg();          // N = fin's offset 
-   fin.seekg(0, std::ios::beg);   // undo jump
-   seq.resize(N);                 // resize seq to N
-   fin.get((char*)seq.data(), N); // read N bytes
-   fin.close();                   // clean up
+   char ch = fin.get();
+   while (fin) {
+     seq += ch;
+     ch = fin.get();
+   }
+   fin.close();
 }
 
 /* scan a string containing a genetic sequence for a subsequence
@@ -75,20 +75,18 @@ void readFile(const string& fileName, string& seq) {
  * Postcondition: the function returns the number of occurrences
              of subSeq within seq.
  */
-long scan(const vector<char>& chunk, const string& subSeq) {
-   long skip = subSeq.size();
-   long count = 0;
-
-   vector<char>::const_iterator 
-        it = search(chunk.begin(), chunk.end(), 
-                     subSeq.begin(), subSeq.end());
-   while (it != chunk.end()) {
-      ++count;
-      it = search(it+skip, chunk.end(),
-                   subSeq.begin(), subSeq.end());
-   }
-
-   return count;
+long scan(const string& seq, const string& subSeq) {
+   size_t subSeqSize = subSeq.size();
+   long seqStop = seq.size() - subSeqSize + 1;
+   long skip = subSeqSize - 1;
+   long occurrences = 0;
+   for (long i = 0; i < seqStop; ++i) {
+      if (seq.substr(i, subSeqSize) == subSeq) { // if they match
+         i += skip;
+         ++occurrences;
+      }
+   }   
+   return occurrences; 
 }
 
 /* output results of scan
@@ -102,47 +100,34 @@ long scan(const vector<char>& chunk, const string& subSeq) {
  * Postcondition: subSeq, numSubSeqs, inputTime, scanTime, and totalTime
  *                have been displayed with appropriate labels.
  */   
-void printResults(int P, const string& subSeq, long numSubSeqs,
+void printResults(const string& subSeq, long numSubSeqs,
                    double inputTime, double scanTime, double totalTime) {
-  cout << "\n" << P << " threads found " << numSubSeqs << " occurrence"
+  cout << "\n1 thread found " << numSubSeqs << " occurrence"
         << ((numSubSeqs == 1) ? "" : "s")
         << " of '" << subSeq 
         << "'\n\tRead Time \tScan Time \tTotal Time\n"
         << fixed << '\t' << inputTime << '\t' << scanTime << '\t' 
         << totalTime << "\n\n";
 }
+
 // --------- main function ---------------------
 int main(int argc, char** argv) { 
-  string fileName;
-  string subSeq;
+    string fileName;
+    string subSeq;
+    string dna;
 
-  double startTotalTime = omp_get_wtime();
-  processCommandLineArgs(argc, argv, fileName, subSeq);
-
-  long count = 0;
-  int P = 0;
-  double readTime = 0.0, scanTime = 0.0;
-
-  #pragma omp parallel reduction(+:count)
-  {
-    P = omp_get_num_threads();
-    int id = omp_get_thread_num();
+    double startTotalTime = omp_get_wtime();
+    processCommandLineArgs(argc, argv, fileName, subSeq);
 
     double startReadTime = omp_get_wtime();
-    ParallelReader<char> pReader(fileName, MPI_CHAR, id, P);
-    vector<char> dnaChunk = pReader.readChunkPlus(subSeq.size()-1);
-    pReader.close();
-    #pragma omp master
-    readTime = omp_get_wtime() - startReadTime;
+    readFile(fileName, dna);
+    double readTime = omp_get_wtime() - startReadTime;
 
     double startScanTime = omp_get_wtime();
-    count = scan(dnaChunk, subSeq);
-    #pragma omp master
-    scanTime = omp_get_wtime() - startScanTime;
-  }
+    long count = scan(dna, subSeq);
+    double scanTime = omp_get_wtime() - startScanTime;
+    double totalTime = omp_get_wtime() - startTotalTime;
 
-  double totalTime = omp_get_wtime() - startTotalTime;
-
-  printResults(P, subSeq, count, readTime, scanTime, totalTime);
+    printResults(subSeq, count, readTime, scanTime, totalTime);
 }
 
